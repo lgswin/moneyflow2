@@ -599,7 +599,10 @@ function renderReasons() {
           (reason) => `
             <li>
               <span>${escapeHtml(reason)}</span>
-              <button class="btn btn-ghost btn-tiny" data-action="delete-reason" data-kind="${kind}" data-reason="${escapeHtml(reason)}">삭제</button>
+              <div class="row-actions">
+                <button class="btn btn-ghost btn-tiny" data-action="edit-reason" data-kind="${kind}" data-reason="${escapeHtml(reason)}">수정</button>
+                <button class="btn btn-ghost btn-tiny" data-action="delete-reason" data-kind="${kind}" data-reason="${escapeHtml(reason)}">삭제</button>
+              </div>
             </li>
           `
         )
@@ -1089,6 +1092,53 @@ function addReason(kind) {
   render();
 }
 
+function reasonTypes(kind) {
+  return {
+    deposit: ["deposit"],
+    expense: ["expense"],
+    transfer: ["transfer_out", "transfer_in"],
+    plan: ["expense", "transfer_out", "transfer_in"],
+  }[kind] || [];
+}
+
+function openEditReason(kind, reason) {
+  openSheet(
+    "사유 수정",
+    `
+      ${field("사유", `<input id="f-reason-name" maxlength="30" value="${escapeHtml(reason)}" />`)}
+      <p class="error" id="form-error" hidden></p>
+    `,
+    `
+      <button class="btn btn-ghost" data-action="close-modal">취소</button>
+      <button class="btn btn-primary" data-action="save-reason" data-kind="${kind}" data-reason="${escapeHtml(reason)}">저장</button>
+    `
+  );
+  document.getElementById("f-reason-name").focus();
+}
+
+function saveReason(kind, from) {
+  const to = document.getElementById("f-reason-name")?.value.trim();
+  if (!to) return showError("사유를 입력해 주세요.");
+  if (to !== from && state.reasons[kind].includes(to)) return showError("이미 있는 사유입니다.");
+  if (to === from) {
+    closeModal();
+    return;
+  }
+  state.reasons[kind] = state.reasons[kind].map((item) => (item === from ? to : item));
+  if (kind === "plan") {
+    state.plans.forEach((plan) => {
+      if (plan.reason === from) plan.reason = to;
+    });
+  }
+  const types = reasonTypes(kind);
+  state.transactions.forEach((tx) => {
+    if (types.includes(tx.type) && tx.reason === from) tx.reason = to;
+  });
+  saveState();
+  closeModal();
+  render();
+}
+
 function deleteReason(kind, reason) {
   if (kind !== "plan" && state.reasons[kind].length <= 1) return;
   state.reasons[kind] = state.reasons[kind].filter((item) => item !== reason);
@@ -1352,6 +1402,7 @@ app.addEventListener("click", (event) => {
   if (action === "export-data") return exportData();
   if (action === "import-data") return importData();
   if (action === "add-reason") return addReason(btn.dataset.kind);
+  if (action === "edit-reason") return openEditReason(btn.dataset.kind, btn.dataset.reason);
   if (action === "delete-reason") return deleteReason(btn.dataset.kind, btn.dataset.reason);
   if (action === "save-plan") return savePlan(btn);
   if (action === "clear-plan") return clearPlan(btn.dataset.reason);
@@ -1395,6 +1446,7 @@ modalRoot.addEventListener("click", (event) => {
   if (action === "save-transfer") return saveTransfer();
   if (action === "save-edit-deposit") return saveEditDeposit(btn.dataset.id);
   if (action === "confirm-import") return confirmImport();
+  if (action === "save-reason") return saveReason(btn.dataset.kind, btn.dataset.reason);
 });
 
 modalRoot.addEventListener("change", (event) => {

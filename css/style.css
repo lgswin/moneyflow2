@@ -185,6 +185,7 @@ select {
   border-radius: var(--radius);
   padding: 18px;
   box-shadow: var(--shadow);
+  min-width: 0;
 }
 
 .dash-hero {
@@ -506,10 +507,22 @@ select {
 .manage-list li {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   gap: 10px;
   padding: 8px 0;
   border-top: 1px solid var(--line);
   font-size: 0.86rem;
+}
+
+.manage-list li span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.row-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
 }
 
 .reason-list li:first-child,
@@ -609,6 +622,12 @@ select {
   font-size: 1.15rem;
 }
 
+.plan-form,
+.field {
+  min-width: 0;
+  overflow: hidden;
+}
+
 .field {
   display: grid;
   gap: 6px;
@@ -625,11 +644,25 @@ select {
 .field select,
 .field textarea {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   border: 1px solid var(--line);
   background: #fff;
   border-radius: 12px;
   padding: 12px;
   color: var(--ink);
+}
+
+input[type="date"] {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+input[type="date"]::-webkit-datetime-edit,
+input[type="date"]::-webkit-date-and-time-value {
+  min-width: 0;
 }
 
 .currency-pick {
