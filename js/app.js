@@ -1,4 +1,4 @@
-const APP_VERSION = "1.6.1";
+const APP_VERSION = "1.6.2";
 const STORAGE_KEY = "moneyflow2";
 
 const CURRENCY = {
@@ -340,7 +340,6 @@ function renderDashboard() {
       </label>
     </section>
 
-    <h2 class="section-title block-title">입출 통계</h2>
     <section class="flow-grid">
       ${renderFlowCard("입금(수입)", stats.deposit, "plus")}
       ${renderFlowCard("송금", stats.transfer, "")}
