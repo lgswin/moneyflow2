@@ -27,6 +27,8 @@ jobs:
           mkdir site
           cp index.html 404.html .nojekyll favicon.svg site/
           cp -r css js site/
+          VERSION="${GITHUB_SHA::7}"
+          sed -i "s/__CACHE__/${VERSION}/g" site/index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
