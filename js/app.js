@@ -1,8 +1,20 @@
 const STORAGE_KEY = "moneyflow2";
 
 const CURRENCY = {
-  KRW: { label: "원화", unit: "원", symbol: "₩" },
-  USD: { label: "달러", unit: "USD", symbol: "$" },
+  KRW: { label: "원화", short: "KRW", symbol: "₩" },
+  CAD: { label: "캐나다 달러", short: "CAD", symbol: "C$" },
+};
+
+const DEFAULT_REASONS = {
+  deposit: ["월급", "용돈", "이자", "환급", "기타 수입"],
+  transfer: ["저축", "생활비", "투자", "정산", "기타 송금"],
+  expense: ["식비", "교통", "주거", "쇼핑", "의료", "통신", "기타 지출"],
+};
+
+const REASON_LABEL = {
+  deposit: "입금(수입)",
+  transfer: "송금",
+  expense: "지출",
 };
 
 const app = document.getElementById("app");
@@ -14,15 +26,50 @@ const view = { page: "home", accountId: null };
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { accounts: [], transactions: [] };
-    const data = JSON.parse(raw);
-    return {
-      accounts: Array.isArray(data.accounts) ? data.accounts : [],
-      transactions: Array.isArray(data.transactions) ? data.transactions : [],
-    };
+    if (!raw) return emptyState();
+    return migrateState(JSON.parse(raw));
   } catch {
-    return { accounts: [], transactions: [] };
+    return emptyState();
   }
+}
+
+function emptyState() {
+  return {
+    accounts: [],
+    transactions: [],
+    reasons: cloneReasons(DEFAULT_REASONS),
+    statsRate: 1000,
+  };
+}
+
+function cloneReasons(source) {
+  return {
+    deposit: [...source.deposit],
+    transfer: [...source.transfer],
+    expense: [...source.expense],
+  };
+}
+
+function migrateState(data) {
+  const accounts = (Array.isArray(data.accounts) ? data.accounts : []).map((account) => ({
+    ...account,
+    currency: account.currency === "USD" ? "CAD" : account.currency,
+  }));
+  const transactions = (Array.isArray(data.transactions) ? data.transactions : []).map((tx) => ({
+    ...tx,
+    currency: tx.currency === "USD" ? "CAD" : tx.currency,
+  }));
+  const reasons = cloneReasons(DEFAULT_REASONS);
+  if (data.reasons) {
+    for (const kind of Object.keys(reasons)) {
+      if (Array.isArray(data.reasons[kind]) && data.reasons[kind].length) {
+        reasons[kind] = data.reasons[kind].map(String);
+      }
+    }
+  }
+  const lastRate = [...transactions].reverse().find((tx) => tx.exchangeRate > 0)?.exchangeRate;
+  const statsRate = Number(data.statsRate) > 0 ? Number(data.statsRate) : lastRate || 1000;
+  return { accounts, transactions, reasons, statsRate };
 }
 
 function saveState() {
@@ -43,8 +90,8 @@ function escapeHtml(value) {
 
 function formatMoney(amount, currency) {
   const n = Number(amount) || 0;
-  if (currency === "USD") {
-    return `$${n.toLocaleString("en-US", {
+  if (currency === "CAD") {
+    return `C$${n.toLocaleString("en-CA", {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })}`;
@@ -73,14 +120,14 @@ function findAccount(id) {
 }
 
 function normalizeAmount(amount, currency) {
-  if (currency === "USD") return Math.round(amount * 100) / 100;
+  if (currency === "CAD") return Math.round(amount * 100) / 100;
   return Math.round(amount);
 }
 
-function convertAmount(amount, from, to, usdKrwRate) {
+function convertAmount(amount, from, to, cadKrwRate) {
   if (from === to) return normalizeAmount(amount, to);
-  if (from === "KRW" && to === "USD") return normalizeAmount(amount / usdKrwRate, "USD");
-  if (from === "USD" && to === "KRW") return normalizeAmount(amount * usdKrwRate, "KRW");
+  if (from === "KRW" && to === "CAD") return normalizeAmount(amount / cadKrwRate, "CAD");
+  if (from === "CAD" && to === "KRW") return normalizeAmount(amount * cadKrwRate, "KRW");
   return normalizeAmount(amount, to);
 }
 
@@ -94,6 +141,47 @@ function getAccount(id) {
   return account;
 }
 
+function sumsByCurrency(items, getAmount = (item) => item.amount, getCurrency = (item) => item.currency) {
+  return items.reduce(
+    (acc, item) => {
+      const currency = getCurrency(item);
+      if (currency === "CAD") acc.CAD += Number(getAmount(item)) || 0;
+      else acc.KRW += Number(getAmount(item)) || 0;
+      return acc;
+    },
+    { KRW: 0, CAD: 0 }
+  );
+}
+
+function dashboardStats() {
+  const balances = sumsByCurrency(state.accounts, (a) => a.balance, (a) => a.currency);
+  const rate = state.statsRate > 0 ? state.statsRate : 1000;
+  const deposits = state.transactions.filter((tx) => tx.type === "deposit");
+  const expenses = state.transactions.filter((tx) => tx.type === "expense");
+  const transfers = state.transactions.filter((tx) => tx.type === "transfer_out");
+  return {
+    rate,
+    balances,
+    totalKrw: balances.KRW + convertAmount(balances.CAD, "CAD", "KRW", rate),
+    totalCad: balances.CAD + convertAmount(balances.KRW, "KRW", "CAD", rate),
+    deposit: { count: deposits.length, sums: sumsByCurrency(deposits), byReason: groupByReason(deposits) },
+    transfer: { count: transfers.length, sums: sumsByCurrency(transfers), byReason: groupByReason(transfers) },
+    expense: { count: expenses.length, sums: sumsByCurrency(expenses), byReason: groupByReason(expenses) },
+  };
+}
+
+function groupByReason(items) {
+  const map = new Map();
+  for (const tx of items) {
+    const key = tx.reason || "기타";
+    if (!map.has(key)) map.set(key, { KRW: 0, CAD: 0 });
+    const row = map.get(key);
+    if (tx.currency === "CAD") row.CAD += Number(tx.amount) || 0;
+    else row.KRW += Number(tx.amount) || 0;
+  }
+  return [...map.entries()];
+}
+
 function render() {
   if (view.page === "detail") {
     const account = getAccount(view.accountId);
@@ -102,13 +190,37 @@ function render() {
       return;
     }
   }
+  if (view.page === "reasons") {
+    app.innerHTML = renderReasons();
+    return;
+  }
   app.innerHTML = renderHome();
 }
 
+function renderMoneyPair(sums) {
+  return `
+    <div class="amt">${formatMoney(sums.KRW, "KRW")}</div>
+    <div class="amt-sub">${formatMoney(sums.CAD, "CAD")}</div>
+  `;
+}
+
+function renderReasonLines(rows) {
+  if (!rows.length) return `<p class="hint">아직 내역이 없습니다.</p>`;
+  return rows
+    .map(([reason, sums]) => {
+      const parts = [];
+      if (sums.KRW) parts.push(formatMoney(sums.KRW, "KRW"));
+      if (sums.CAD) parts.push(formatMoney(sums.CAD, "CAD"));
+      return `<li><span>${escapeHtml(reason)}</span><strong>${parts.join(" · ") || "—"}</strong></li>`;
+    })
+    .join("");
+}
+
 function renderHome() {
+  const stats = dashboardStats();
   const cards = state.accounts
-    .map((account) => {
-      return `
+    .map(
+      (account) => `
         <button class="account-card" data-action="open-account" data-id="${account.id}">
           <div>
             <h2>${escapeHtml(account.name)}</h2>
@@ -116,23 +228,107 @@ function renderHome() {
           </div>
           <span class="badge badge-${account.currency.toLowerCase()}">${CURRENCY[account.currency].label}</span>
         </button>
-      `;
-    })
+      `
+    )
     .join("");
 
   return `
     <header class="topbar">
       <div class="brand">
         <h1>머니플로우</h1>
-        <p>계좌와 입출금을 간단히 기록합니다</p>
+        <p>원화와 캐나다 달러 계좌를 한곳에서 봅니다</p>
       </div>
-      <button class="btn btn-primary" data-action="new-account">계좌 추가</button>
+      <div class="actions">
+        <button class="btn" data-action="open-reasons">사유</button>
+        <button class="btn btn-primary" data-action="new-account">계좌 추가</button>
+      </div>
     </header>
+
+    <section class="dash-hero card">
+      <p class="section-title">전체 총 금액</p>
+      <p class="balance">${formatMoney(stats.totalKrw, "KRW")}</p>
+      <p class="hero-sub">${formatMoney(stats.totalCad, "CAD")}</p>
+      <label class="rate-row">
+        <span>통계용 환율 1 CAD =</span>
+        <input id="stats-rate" inputmode="decimal" value="${escapeHtml(String(stats.rate))}" />
+        <span>KRW</span>
+      </label>
+    </section>
+
+    <section class="dash-grid">
+      <article class="card stat-card">
+        <p class="section-title">원화</p>
+        <p class="amt">${formatMoney(stats.balances.KRW, "KRW")}</p>
+      </article>
+      <article class="card stat-card">
+        <p class="section-title">캐나다 달러</p>
+        <p class="amt">${formatMoney(stats.balances.CAD, "CAD")}</p>
+      </article>
+    </section>
+
+    <h2 class="section-title block-title">입출 통계</h2>
+    <section class="flow-grid">
+      ${renderFlowCard("입금(수입)", stats.deposit, "plus")}
+      ${renderFlowCard("송금", stats.transfer, "")}
+      ${renderFlowCard("지출", stats.expense, "minus")}
+    </section>
+
+    <div class="section-head">
+      <h2 class="section-title">계좌</h2>
+    </div>
     ${
       state.accounts.length
         ? `<div class="stack">${cards}</div>`
-        : `<div class="empty">아직 계좌가 없습니다.<br />먼저 원화 또는 달러 계좌를 만들어 주세요.</div>`
+        : `<div class="empty">아직 계좌가 없습니다.<br />먼저 원화 또는 캐나다 달러 계좌를 만들어 주세요.</div>`
     }
+  `;
+}
+
+function renderFlowCard(title, group, tone) {
+  return `
+    <article class="card stat-card">
+      <p class="section-title">${title} · ${group.count}건</p>
+      <div class="${tone}">${renderMoneyPair(group.sums)}</div>
+      <ul class="reason-list">${renderReasonLines(group.byReason)}</ul>
+    </article>
+  `;
+}
+
+function renderReasons() {
+  const blocks = ["deposit", "transfer", "expense"]
+    .map((kind) => {
+      const rows = state.reasons[kind]
+        .map(
+          (reason) => `
+            <li>
+              <span>${escapeHtml(reason)}</span>
+              <button class="btn btn-ghost btn-tiny" data-action="delete-reason" data-kind="${kind}" data-reason="${escapeHtml(reason)}">삭제</button>
+            </li>
+          `
+        )
+        .join("");
+      return `
+        <section class="card reason-card">
+          <h2>${REASON_LABEL[kind]} 사유</h2>
+          <ul class="manage-list">${rows}</ul>
+          <div class="add-row">
+            <input id="reason-new-${kind}" maxlength="30" placeholder="새 사유" />
+            <button class="btn btn-primary" data-action="add-reason" data-kind="${kind}">추가</button>
+          </div>
+        </section>
+      `;
+    })
+    .join("");
+
+  return `
+    <header class="topbar">
+      <button class="back" data-action="go-home">← 대시보드</button>
+    </header>
+    <div class="brand page-intro">
+      <h1>사유 관리</h1>
+      <p>입금, 송금, 지출할 때 이 목록에서 고릅니다.</p>
+    </div>
+    <div class="stack">${blocks}</div>
   `;
 }
 
@@ -147,7 +343,7 @@ function renderDetail(account) {
 
   return `
     <header class="topbar">
-      <button class="back" data-action="go-home">← 계좌 목록</button>
+      <button class="back" data-action="go-home">← 대시보드</button>
       <div class="actions">
         <button class="icon-btn" data-action="edit-account">편집</button>
         <button class="icon-btn" data-action="delete-account">삭제</button>
@@ -166,14 +362,14 @@ function renderDetail(account) {
       <button class="btn" data-action="expense">지출</button>
     </div>
     <h2 class="section-title">거래 내역</h2>
-    <div class="card">${list}</div>
+    <div class="card tx-card">${list}</div>
   `;
 }
 
 function renderTransaction(tx) {
   const plus = tx.type === "deposit" || tx.type === "transfer_in";
   const title = {
-    deposit: "입금",
+    deposit: "입금(수입)",
     expense: "지출",
     transfer_out: "송금",
     transfer_in: "송금 입금",
@@ -183,13 +379,13 @@ function renderTransaction(tx) {
   if (tx.type === "transfer_out" && tx.relatedAccountName) {
     detail = `${detail ? `${escapeHtml(tx.reason)} · ` : ""}→ ${escapeHtml(tx.relatedAccountName)}`;
   } else if (tx.type === "transfer_in" && tx.relatedAccountName) {
-    detail = `← ${escapeHtml(tx.relatedAccountName)}`;
+    detail = `${detail ? `${escapeHtml(tx.reason)} · ` : ""}← ${escapeHtml(tx.relatedAccountName)}`;
   } else {
     detail = escapeHtml(detail);
   }
 
   if (tx.exchangeRate) {
-    const rateText = `환율 1 USD = ${Number(tx.exchangeRate).toLocaleString("ko-KR")} KRW`;
+    const rateText = `환율 1 CAD = ${Number(tx.exchangeRate).toLocaleString("ko-KR")} KRW`;
     detail = detail ? `${detail} · ${rateText}` : rateText;
   }
 
@@ -225,15 +421,22 @@ function field(label, control) {
   return `<label class="field"><span>${label}</span>${control}</label>`;
 }
 
+function reasonSelect(kind) {
+  const options = state.reasons[kind]
+    .map((reason) => `<option value="${escapeHtml(reason)}">${escapeHtml(reason)}</option>`)
+    .join("");
+  return `<select id="f-reason"><option value="">사유를 선택하세요</option>${options}</select>`;
+}
+
 function openAccountForm(account) {
   const isEdit = Boolean(account);
-  const currency = account?.currency || "KRW";
+  const currency = account?.currency === "CAD" ? "CAD" : "KRW";
   const currencyField = isEdit
     ? `<div class="field"><span>통화</span><div class="readonly">${CURRENCY[currency].label} 계좌</div></div>`
     : `<div class="field"><span>통화</span>
         <div class="currency-pick">
           <label><input type="radio" name="currency" value="KRW" ${currency === "KRW" ? "checked" : ""} />원화</label>
-          <label><input type="radio" name="currency" value="USD" ${currency === "USD" ? "checked" : ""} />달러</label>
+          <label><input type="radio" name="currency" value="CAD" ${currency === "CAD" ? "checked" : ""} />캐나다 달러</label>
         </div>
       </div>`;
 
@@ -254,10 +457,10 @@ function openAccountForm(account) {
 
 function openDepositForm(account) {
   openSheet(
-    "입금",
+    "입금(수입)",
     `
       ${field("입금 금액", `<input id="f-amount" inputmode="decimal" placeholder="${account.currency === "KRW" ? "100000" : "100.00"}" />`)}
-      ${field("입금 사유", `<input id="f-reason" maxlength="80" placeholder="예: 월급" />`)}
+      ${field("입금 사유", reasonSelect("deposit"))}
       <p class="error" id="form-error" hidden></p>
     `,
     `
@@ -273,7 +476,7 @@ function openExpenseForm(account) {
     "지출",
     `
       ${field("지출 금액", `<input id="f-amount" inputmode="decimal" placeholder="${account.currency === "KRW" ? "12000" : "20.00"}" />`)}
-      ${field("지출 사유", `<input id="f-reason" maxlength="80" placeholder="예: 점심" />`)}
+      ${field("지출 사유", reasonSelect("expense"))}
       <p class="error" id="form-error" hidden></p>
     `,
     `
@@ -308,6 +511,7 @@ function openTransferForm(account) {
       <div class="field"><span>출발 계좌</span><div class="readonly">${escapeHtml(account.name)} · ${CURRENCY[account.currency].label}</div></div>
       ${field("상대 계좌", `<select id="f-target">${options}</select>`)}
       ${field("송금 금액", `<input id="f-amount" inputmode="decimal" placeholder="${account.currency === "KRW" ? "100000" : "100.00"}" />`)}
+      ${field("송금 사유", reasonSelect("transfer"))}
       <div id="fx-fields"></div>
       <p class="error" id="form-error" hidden></p>
     `,
@@ -341,11 +545,12 @@ function updateFxFields() {
   }
 
   box.innerHTML = `
-    ${field("환율 (1 USD = ? KRW)", `<input id="f-rate" inputmode="decimal" placeholder="1350" />`)}
+    ${field("환율 (1 CAD = ? KRW)", `<input id="f-rate" inputmode="decimal" placeholder="1000" value="${escapeHtml(String(state.statsRate || ""))}" />`)}
     <p class="preview" id="fx-preview">환율을 입력하면 상대 계좌 입금액을 보여 줍니다.</p>
   `;
   document.getElementById("f-rate").addEventListener("input", updateFxPreview);
   document.getElementById("f-amount").addEventListener("input", updateFxPreview);
+  updateFxPreview();
 }
 
 function updateFxPreview() {
@@ -373,7 +578,7 @@ function createAccount() {
   const name = document.getElementById("f-name").value.trim();
   const currency = document.querySelector('input[name="currency"]:checked')?.value;
   if (!name) return showError("계좌 이름을 입력해 주세요.");
-  if (currency !== "KRW" && currency !== "USD") return showError("통화를 선택해 주세요.");
+  if (currency !== "KRW" && currency !== "CAD") return showError("통화를 선택해 주세요.");
   state.accounts.push({ id: uid(), name, currency, balance: 0 });
   saveState();
   closeModal();
@@ -403,13 +608,17 @@ function deleteAccount() {
   render();
 }
 
+function readReason() {
+  return document.getElementById("f-reason")?.value.trim() || "";
+}
+
 function saveDeposit() {
   const account = findAccount(view.accountId);
   if (!account) return closeModal();
   let amount = parseAmount(document.getElementById("f-amount").value);
-  const reason = document.getElementById("f-reason").value.trim();
+  const reason = readReason();
   if (!(amount > 0)) return showError("입금 금액을 올바르게 입력해 주세요.");
-  if (!reason) return showError("입금 사유를 입력해 주세요.");
+  if (!reason) return showError("입금 사유를 선택해 주세요.");
   amount = normalizeAmount(amount, account.currency);
   account.balance += amount;
   state.transactions.push({
@@ -430,9 +639,9 @@ function saveExpense() {
   const account = findAccount(view.accountId);
   if (!account) return closeModal();
   let amount = parseAmount(document.getElementById("f-amount").value);
-  const reason = document.getElementById("f-reason").value.trim();
+  const reason = readReason();
   if (!(amount > 0)) return showError("지출 금액을 올바르게 입력해 주세요.");
-  if (!reason) return showError("지출 사유를 입력해 주세요.");
+  if (!reason) return showError("지출 사유를 선택해 주세요.");
   amount = normalizeAmount(amount, account.currency);
   if (amount > account.balance) return showError("잔액이 부족합니다.");
   account.balance -= amount;
@@ -454,7 +663,9 @@ function saveTransfer() {
   const { account, target } = selectedTargetAccount();
   if (!account || !target) return showError("상대 계좌를 선택해 주세요.");
   let amount = parseAmount(document.getElementById("f-amount").value);
+  const reason = readReason();
   if (!(amount > 0)) return showError("송금 금액을 올바르게 입력해 주세요.");
+  if (!reason) return showError("송금 사유를 선택해 주세요.");
   amount = normalizeAmount(amount, account.currency);
   if (amount > account.balance) return showError("잔액이 부족합니다.");
 
@@ -462,9 +673,10 @@ function saveTransfer() {
   let exchangeRate = null;
   if (account.currency !== target.currency) {
     const rate = parseAmount(document.getElementById("f-rate")?.value);
-    if (!(rate > 0)) return showError("환율을 입력해 주세요. 예: 1 USD = 1350 KRW");
+    if (!(rate > 0)) return showError("환율을 입력해 주세요. 예: 1 CAD = 1000 KRW");
     converted = convertAmount(amount, account.currency, target.currency, rate);
     exchangeRate = rate;
+    state.statsRate = rate;
   }
 
   const now = new Date().toISOString();
@@ -476,6 +688,7 @@ function saveTransfer() {
     type: "transfer_out",
     amount,
     currency: account.currency,
+    reason,
     relatedAccountId: target.id,
     relatedAccountName: target.name,
     exchangeRate,
@@ -487,6 +700,7 @@ function saveTransfer() {
     type: "transfer_in",
     amount: converted,
     currency: target.currency,
+    reason,
     relatedAccountId: account.id,
     relatedAccountName: account.name,
     exchangeRate,
@@ -494,6 +708,34 @@ function saveTransfer() {
   });
   saveState();
   closeModal();
+  render();
+}
+
+function addReason(kind) {
+  const input = document.getElementById(`reason-new-${kind}`);
+  const name = input?.value.trim();
+  if (!name) return;
+  if (state.reasons[kind].includes(name)) {
+    input.value = "";
+    return;
+  }
+  state.reasons[kind].push(name);
+  saveState();
+  render();
+}
+
+function deleteReason(kind, reason) {
+  if (state.reasons[kind].length <= 1) return;
+  state.reasons[kind] = state.reasons[kind].filter((item) => item !== reason);
+  saveState();
+  render();
+}
+
+function saveStatsRate() {
+  const rate = parseAmount(document.getElementById("stats-rate")?.value);
+  if (!(rate > 0)) return;
+  state.statsRate = rate;
+  saveState();
   render();
 }
 
@@ -515,6 +757,13 @@ app.addEventListener("click", (event) => {
     render();
     return;
   }
+  if (action === "open-reasons") {
+    view.page = "reasons";
+    render();
+    return;
+  }
+  if (action === "add-reason") return addReason(btn.dataset.kind);
+  if (action === "delete-reason") return deleteReason(btn.dataset.kind, btn.dataset.reason);
   if (action === "new-account") return openAccountForm();
   if (action === "edit-account" && account) return openAccountForm(account);
   if (action === "delete-account" && account) {
@@ -531,6 +780,10 @@ app.addEventListener("click", (event) => {
   if (action === "deposit" && account) return openDepositForm(account);
   if (action === "expense" && account) return openExpenseForm(account);
   if (action === "transfer" && account) return openTransferForm(account);
+});
+
+app.addEventListener("change", (event) => {
+  if (event.target.id === "stats-rate") saveStatsRate();
 });
 
 modalRoot.addEventListener("click", (event) => {
@@ -561,6 +814,14 @@ modalRoot.addEventListener("keydown", (event) => {
     event.preventDefault();
     submit.click();
   }
+});
+
+app.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  const kind = event.target.id?.startsWith("reason-new-") ? event.target.id.replace("reason-new-", "") : "";
+  if (!kind) return;
+  event.preventDefault();
+  addReason(kind);
 });
 
 document.addEventListener("keydown", (event) => {
