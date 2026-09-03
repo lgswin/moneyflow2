@@ -1,3 +1,4 @@
+const APP_VERSION = "1.6.0";
 const STORAGE_KEY = "moneyflow2";
 
 const CURRENCY = {
@@ -448,6 +449,7 @@ function renderSettings() {
         </div>
       </button>
       <input id="restore-file" type="file" accept="application/json,.json" hidden />
+      <p class="app-version">버전 ${APP_VERSION}</p>
     </div>
   `;
 }
@@ -600,8 +602,8 @@ function renderReasons() {
             <li>
               <span>${escapeHtml(reason)}</span>
               <div class="row-actions">
-                <button class="btn btn-ghost btn-tiny" data-action="edit-reason" data-kind="${kind}" data-reason="${escapeHtml(reason)}">수정</button>
-                <button class="btn btn-ghost btn-tiny" data-action="delete-reason" data-kind="${kind}" data-reason="${escapeHtml(reason)}">삭제</button>
+                <button class="btn btn-tiny" data-action="edit-reason" data-kind="${kind}" data-reason="${escapeHtml(reason)}">수정</button>
+                <button class="btn btn-tiny btn-danger-ghost" data-action="delete-reason" data-kind="${kind}" data-reason="${escapeHtml(reason)}">삭제</button>
               </div>
             </li>
           `
@@ -741,7 +743,7 @@ function renderTransaction(tx) {
         </div>
         ${
           canEdit
-            ? `<button class="btn btn-ghost btn-tiny" data-action="edit-deposit" data-id="${tx.id}">수정</button>`
+            ? `<button class="btn btn-tiny" data-action="edit-deposit" data-id="${tx.id}">수정</button>`
             : ""
         }
       </div>
