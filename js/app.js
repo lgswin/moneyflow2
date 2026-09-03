@@ -9,12 +9,14 @@ const DEFAULT_REASONS = {
   deposit: ["월급", "용돈", "이자", "환급", "기타 수입"],
   transfer: ["저축", "생활비", "투자", "정산", "기타 송금"],
   expense: ["식비", "교통", "주거", "쇼핑", "의료", "통신", "기타 지출"],
+  plan: ["월세", "관리비", "보험", "카드대금"],
 };
 
 const REASON_LABEL = {
   deposit: "입금(수입)",
   transfer: "송금",
   expense: "지출",
+  plan: "지출계획",
 };
 
 const app = document.getElementById("app");
@@ -38,6 +40,7 @@ function emptyState() {
     accounts: [],
     transactions: [],
     reasons: cloneReasons(DEFAULT_REASONS),
+    plans: [],
     statsRate: 1000,
   };
 }
@@ -47,6 +50,7 @@ function cloneReasons(source) {
     deposit: [...source.deposit],
     transfer: [...source.transfer],
     expense: [...source.expense],
+    plan: [...(source.plan || DEFAULT_REASONS.plan)],
   };
 }
 
@@ -69,7 +73,15 @@ function migrateState(data) {
   }
   const lastRate = [...transactions].reverse().find((tx) => tx.exchangeRate > 0)?.exchangeRate;
   const statsRate = Number(data.statsRate) > 0 ? Number(data.statsRate) : lastRate || 1000;
-  return { accounts, transactions, reasons, statsRate };
+  const plans = (Array.isArray(data.plans) ? data.plans : [])
+    .filter((plan) => plan && plan.reason)
+    .map((plan) => ({
+      id: plan.id || uid(),
+      reason: String(plan.reason),
+      accountId: plan.accountId || "",
+      amount: Number(plan.amount) || 0,
+    }));
+  return { accounts, transactions, reasons, plans, statsRate };
 }
 
 function saveState() {
@@ -182,6 +194,32 @@ function groupByReason(items) {
   return [...map.entries()];
 }
 
+function findPlan(reason) {
+  return state.plans.find((plan) => plan.reason === reason);
+}
+
+function planMatches(tx, plan) {
+  return (
+    (tx.type === "expense" || tx.type === "transfer_out") &&
+    tx.accountId === plan.accountId &&
+    tx.reason === plan.reason
+  );
+}
+
+function planProgress(plan) {
+  const account = findAccount(plan.accountId);
+  const txs = state.transactions.filter((tx) => planMatches(tx, plan));
+  const spent = txs.reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
+  const planned = Number(plan.amount) || 0;
+  const expenseCount = txs.filter((tx) => tx.type === "expense").length;
+  const transferCount = txs.filter((tx) => tx.type === "transfer_out").length;
+  let status = "wait";
+  if (planned > 0 && spent >= planned) status = spent > planned ? "over" : "done";
+  else if (spent > 0) status = "partial";
+  const ratio = planned > 0 ? Math.min(spent / planned, 1) : 0;
+  return { account, spent, planned, expenseCount, transferCount, status, ratio, txs };
+}
+
 function render() {
   if (view.page === "detail") {
     const account = getAccount(view.accountId);
@@ -192,6 +230,10 @@ function render() {
   }
   if (view.page === "reasons") {
     app.innerHTML = renderReasons();
+    return;
+  }
+  if (view.page === "plans") {
+    app.innerHTML = renderPlans();
     return;
   }
   app.innerHTML = renderHome();
@@ -266,6 +308,12 @@ function renderHome() {
       </article>
     </section>
 
+    <div class="section-head">
+      <h2 class="section-title">지출계획</h2>
+      <button class="btn btn-ghost" data-action="open-plans">계획 설정</button>
+    </div>
+    ${renderPlanDashboard()}
+
     <h2 class="section-title block-title">입출 통계</h2>
     <section class="flow-grid">
       ${renderFlowCard("입금(수입)", stats.deposit, "plus")}
@@ -284,6 +332,114 @@ function renderHome() {
   `;
 }
 
+function planStatusLabel(status) {
+  return {
+    wait: "미확인",
+    partial: "일부 확인",
+    done: "확인 완료",
+    over: "초과",
+  }[status];
+}
+
+function renderPlanDashboard() {
+  const items = (state.reasons.plan || [])
+    .map((reason) => findPlan(reason))
+    .filter((plan) => plan && plan.accountId && plan.amount > 0);
+
+  if (!items.length) {
+    return `<div class="empty">아직 지출계획이 없습니다.<br />사유를 만든 뒤 출금 계좌와 금액을 지정해 주세요.</div>`;
+  }
+
+  const cards = items
+    .map((plan) => {
+      const progress = planProgress(plan);
+      const currency = progress.account?.currency || "KRW";
+      const accountName = progress.account?.name || "삭제된 계좌";
+      const remain = Math.max(progress.planned - progress.spent, 0);
+      return `
+        <article class="card plan-card">
+          <div class="plan-top">
+            <h3>${escapeHtml(plan.reason)}</h3>
+            <span class="badge badge-${progress.status}">${planStatusLabel(progress.status)}</span>
+          </div>
+          <p class="plan-meta">${escapeHtml(accountName)} · 계획 ${formatMoney(progress.planned, currency)}</p>
+          <div class="progress is-${progress.status}"><span style="width:${Math.round(progress.ratio * 100)}%"></span></div>
+          <p class="plan-meta">
+            확인 ${formatMoney(progress.spent, currency)}
+            · 남음 ${formatMoney(remain, currency)}
+            · 지출 ${progress.expenseCount}건
+            · 송금 ${progress.transferCount}건
+          </p>
+        </article>
+      `;
+    })
+    .join("");
+
+  return `<div class="plan-grid">${cards}</div>`;
+}
+
+function renderPlans() {
+  if (!state.accounts.length) {
+    return `
+      <header class="topbar">
+        <button class="back" data-action="go-home">← 대시보드</button>
+      </header>
+      <div class="empty">계좌를 먼저 만든 뒤 지출계획을 설정할 수 있습니다.</div>
+    `;
+  }
+
+  const reasons = state.reasons.plan || [];
+  if (!reasons.length) {
+    return `
+      <header class="topbar">
+        <button class="back" data-action="go-home">← 대시보드</button>
+        <button class="btn" data-action="open-reasons">사유 관리</button>
+      </header>
+      <div class="empty">지출계획 사유가 없습니다.<br />사유 관리에서 먼저 추가해 주세요.</div>
+    `;
+  }
+
+  const accountOptions = (selectedId) =>
+    state.accounts
+      .map(
+        (account) =>
+          `<option value="${account.id}" ${account.id === selectedId ? "selected" : ""}>${escapeHtml(account.name)} (${CURRENCY[account.currency].label})</option>`
+      )
+      .join("");
+
+  const cards = reasons
+    .map((reason) => {
+      const plan = findPlan(reason);
+      const currency = findAccount(plan?.accountId)?.currency || state.accounts[0].currency;
+      return `
+        <section class="card plan-form" data-plan-reason="${escapeHtml(reason)}">
+          <h2>${escapeHtml(reason)}</h2>
+          ${field("출금 예정 계좌", `<select class="plan-account"><option value="">계좌 선택</option>${accountOptions(plan?.accountId)}</select>`)}
+          ${field("계획 금액", `<input class="plan-amount" inputmode="decimal" value="${plan?.amount ? escapeHtml(String(plan.amount)) : ""}" placeholder="${currency === "CAD" ? "100.00" : "100000"}" />`)}
+          <p class="hint">이 사유로 해당 계좌에서 지출하거나 송금하면 계획이 확인됩니다.</p>
+          <p class="error" hidden></p>
+          <div class="sheet-actions">
+            <button class="btn btn-ghost" data-action="clear-plan" data-reason="${escapeHtml(reason)}">비우기</button>
+            <button class="btn btn-primary" data-action="save-plan" data-reason="${escapeHtml(reason)}">저장</button>
+          </div>
+        </section>
+      `;
+    })
+    .join("");
+
+  return `
+    <header class="topbar">
+      <button class="back" data-action="go-home">← 대시보드</button>
+      <button class="btn" data-action="open-reasons">사유 관리</button>
+    </header>
+    <div class="brand page-intro">
+      <h1>지출계획 설정</h1>
+      <p>사유별로 출금 계좌와 금액을 정하면 대시보드에서 확인 여부를 보여 줍니다.</p>
+    </div>
+    <div class="stack">${cards}</div>
+  `;
+}
+
 function renderFlowCard(title, group, tone) {
   return `
     <article class="card stat-card">
@@ -295,7 +451,7 @@ function renderFlowCard(title, group, tone) {
 }
 
 function renderReasons() {
-  const blocks = ["deposit", "transfer", "expense"]
+  const blocks = ["deposit", "transfer", "expense", "plan"]
     .map((kind) => {
       const rows = state.reasons[kind]
         .map(
@@ -326,7 +482,7 @@ function renderReasons() {
     </header>
     <div class="brand page-intro">
       <h1>사유 관리</h1>
-      <p>입금, 송금, 지출할 때 이 목록에서 고릅니다.</p>
+      <p>입금, 송금, 지출, 지출계획에서 고를 사유를 관리합니다.</p>
     </div>
     <div class="stack">${blocks}</div>
   `;
@@ -422,10 +578,28 @@ function field(label, control) {
 }
 
 function reasonSelect(kind) {
-  const options = state.reasons[kind]
-    .map((reason) => `<option value="${escapeHtml(reason)}">${escapeHtml(reason)}</option>`)
+  const seen = new Set();
+  const groups = [{ label: REASON_LABEL[kind], items: state.reasons[kind] || [] }];
+  if (kind === "expense" || kind === "transfer") {
+    groups.push({ label: "지출계획", items: state.reasons.plan || [] });
+  }
+
+  const markup = groups
+    .map((group) => {
+      const options = group.items
+        .filter((reason) => {
+          if (seen.has(reason)) return false;
+          seen.add(reason);
+          return true;
+        })
+        .map((reason) => `<option value="${escapeHtml(reason)}">${escapeHtml(reason)}</option>`)
+        .join("");
+      if (!options) return "";
+      return `<optgroup label="${group.label}">${options}</optgroup>`;
+    })
     .join("");
-  return `<select id="f-reason"><option value="">사유를 선택하세요</option>${options}</select>`;
+
+  return `<select id="f-reason"><option value="">사유를 선택하세요</option>${markup}</select>`;
 }
 
 function openAccountForm(account) {
@@ -601,6 +775,9 @@ function deleteAccount() {
   if (!account) return closeModal();
   state.transactions = state.transactions.filter((tx) => tx.accountId !== account.id);
   state.accounts = state.accounts.filter((a) => a.id !== account.id);
+  state.plans = state.plans.map((plan) =>
+    plan.accountId === account.id ? { ...plan, accountId: "" } : plan
+  );
   view.page = "home";
   view.accountId = null;
   saveState();
@@ -725,8 +902,45 @@ function addReason(kind) {
 }
 
 function deleteReason(kind, reason) {
-  if (state.reasons[kind].length <= 1) return;
+  if (kind !== "plan" && state.reasons[kind].length <= 1) return;
   state.reasons[kind] = state.reasons[kind].filter((item) => item !== reason);
+  if (kind === "plan") {
+    state.plans = state.plans.filter((plan) => plan.reason !== reason);
+  }
+  saveState();
+  render();
+}
+
+function savePlan(btn) {
+  const reason = btn.dataset.reason;
+  const card = btn.closest("[data-plan-reason]");
+  if (!card || !reason) return;
+  const error = card.querySelector(".error");
+  const accountId = card.querySelector(".plan-account")?.value || "";
+  const amount = parseAmount(card.querySelector(".plan-amount")?.value);
+  const show = (message) => {
+    if (!error) return;
+    error.hidden = !message;
+    error.textContent = message || "";
+  };
+  if (!accountId) return show("출금 예정 계좌를 선택해 주세요.");
+  if (!(amount > 0)) return show("계획 금액을 입력해 주세요.");
+  const account = findAccount(accountId);
+  if (!account) return show("계좌를 다시 선택해 주세요.");
+  const existing = findPlan(reason);
+  const normalized = normalizeAmount(amount, account.currency);
+  if (existing) {
+    existing.accountId = accountId;
+    existing.amount = normalized;
+  } else {
+    state.plans.push({ id: uid(), reason, accountId, amount: normalized });
+  }
+  saveState();
+  render();
+}
+
+function clearPlan(reason) {
+  state.plans = state.plans.filter((plan) => plan.reason !== reason);
   saveState();
   render();
 }
@@ -762,8 +976,15 @@ app.addEventListener("click", (event) => {
     render();
     return;
   }
+  if (action === "open-plans") {
+    view.page = "plans";
+    render();
+    return;
+  }
   if (action === "add-reason") return addReason(btn.dataset.kind);
   if (action === "delete-reason") return deleteReason(btn.dataset.kind, btn.dataset.reason);
+  if (action === "save-plan") return savePlan(btn);
+  if (action === "clear-plan") return clearPlan(btn.dataset.reason);
   if (action === "new-account") return openAccountForm();
   if (action === "edit-account" && account) return openAccountForm(account);
   if (action === "delete-account" && account) {

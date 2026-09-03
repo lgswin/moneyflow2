@@ -315,9 +315,92 @@ select {
   letter-spacing: 0.04em;
 }
 
-.block-title,
-.section-head .section-title {
+.block-title {
   margin-bottom: 10px;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.section-head .section-title {
+  margin: 0;
+}
+
+.plan-grid {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.plan-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.plan-card h3,
+.plan-form h2 {
+  margin: 0 0 8px;
+  font-size: 1.05rem;
+}
+
+.plan-meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.progress {
+  height: 8px;
+  margin: 12px 0;
+  overflow: hidden;
+  background: var(--paper-2);
+  border-radius: 999px;
+}
+
+.progress span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.progress.is-partial span {
+  background: var(--cad);
+}
+
+.progress.is-done span {
+  background: var(--plus);
+}
+
+.progress.is-over span {
+  width: 100%;
+  background: var(--minus);
+}
+
+.badge-wait {
+  background: var(--paper-2);
+  color: var(--muted);
+}
+
+.badge-partial {
+  background: var(--cad-soft);
+  color: var(--cad);
+}
+
+.badge-done {
+  background: var(--krw-soft);
+  color: var(--krw);
+}
+
+.badge-over {
+  background: #f3e0db;
+  color: var(--minus);
 }
 
 .reason-list,
@@ -536,6 +619,10 @@ select {
 @media (min-width: 640px) {
   .flow-grid {
     grid-template-columns: repeat(3, 1fr);
+  }
+
+  .plan-grid {
+    grid-template-columns: 1fr 1fr;
   }
 }
 
