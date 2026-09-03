@@ -23,7 +23,7 @@ const app = document.getElementById("app");
 const modalRoot = document.getElementById("modal-root");
 
 const state = loadState();
-const view = { page: "home", accountId: null };
+const view = { page: "dashboard", accountId: null };
 
 function loadState() {
   try {
@@ -146,7 +146,7 @@ function convertAmount(amount, from, to, cadKrwRate) {
 function getAccount(id) {
   const account = findAccount(id);
   if (!account) {
-    view.page = "home";
+    view.page = "accounts";
     view.accountId = null;
     return null;
   }
@@ -220,23 +220,49 @@ function planProgress(plan) {
   return { account, spent, planned, expenseCount, transferCount, status, ratio, txs };
 }
 
+function activeTab() {
+  if (view.page === "dashboard") return "dashboard";
+  if (view.page === "accounts" || view.page === "detail") return "accounts";
+  return "settings";
+}
+
+function renderTabbar() {
+  const active = activeTab();
+  const tabs = [
+    ["dashboard", "대시보드"],
+    ["accounts", "계좌"],
+    ["settings", "설정"],
+  ];
+  return `
+    <nav class="tabbar" aria-label="주요 메뉴">
+      ${tabs
+        .map(
+          ([id, label]) => `
+            <button class="tab ${active === id ? "is-active" : ""}" data-action="tab-${id}">${label}</button>
+          `
+        )
+        .join("")}
+    </nav>
+  `;
+}
+
 function render() {
+  let inner = "";
   if (view.page === "detail") {
     const account = getAccount(view.accountId);
-    if (account) {
-      app.innerHTML = renderDetail(account);
-      return;
-    }
+    inner = account ? renderDetail(account) : renderAccounts();
+  } else if (view.page === "accounts") {
+    inner = renderAccounts();
+  } else if (view.page === "settings") {
+    inner = renderSettings();
+  } else if (view.page === "reasons") {
+    inner = renderReasons();
+  } else if (view.page === "plans") {
+    inner = renderPlans();
+  } else {
+    inner = renderDashboard();
   }
-  if (view.page === "reasons") {
-    app.innerHTML = renderReasons();
-    return;
-  }
-  if (view.page === "plans") {
-    app.innerHTML = renderPlans();
-    return;
-  }
-  app.innerHTML = renderHome();
+  app.innerHTML = `<div class="page">${inner}</div>${renderTabbar()}`;
 }
 
 function renderMoneyPair(sums) {
@@ -258,31 +284,13 @@ function renderReasonLines(rows) {
     .join("");
 }
 
-function renderHome() {
+function renderDashboard() {
   const stats = dashboardStats();
-  const cards = state.accounts
-    .map(
-      (account) => `
-        <button class="account-card" data-action="open-account" data-id="${account.id}">
-          <div>
-            <h2>${escapeHtml(account.name)}</h2>
-            <div class="amt">${formatMoney(account.balance, account.currency)}</div>
-          </div>
-          <span class="badge badge-${account.currency.toLowerCase()}">${CURRENCY[account.currency].label}</span>
-        </button>
-      `
-    )
-    .join("");
-
   return `
     <header class="topbar">
       <div class="brand">
-        <h1>머니플로우</h1>
-        <p>원화와 캐나다 달러 계좌를 한곳에서 봅니다</p>
-      </div>
-      <div class="actions">
-        <button class="btn" data-action="open-reasons">사유</button>
-        <button class="btn btn-primary" data-action="new-account">계좌 추가</button>
+        <h1>대시보드</h1>
+        <p>잔액과 지출계획, 입출 통계를 봅니다</p>
       </div>
     </header>
 
@@ -308,10 +316,7 @@ function renderHome() {
       </article>
     </section>
 
-    <div class="section-head">
-      <h2 class="section-title">지출계획</h2>
-      <button class="btn btn-ghost" data-action="open-plans">계획 설정</button>
-    </div>
+    <h2 class="section-title block-title">지출계획</h2>
     ${renderPlanDashboard()}
 
     <h2 class="section-title block-title">입출 통계</h2>
@@ -320,15 +325,69 @@ function renderHome() {
       ${renderFlowCard("송금", stats.transfer, "")}
       ${renderFlowCard("지출", stats.expense, "minus")}
     </section>
+  `;
+}
 
-    <div class="section-head">
-      <h2 class="section-title">계좌</h2>
-    </div>
+function renderAccountCards() {
+  return state.accounts
+    .map(
+      (account) => `
+        <button class="account-card" data-action="open-account" data-id="${account.id}">
+          <div>
+            <h2>${escapeHtml(account.name)}</h2>
+            <div class="amt">${formatMoney(account.balance, account.currency)}</div>
+          </div>
+          <span class="badge badge-${account.currency.toLowerCase()}">${CURRENCY[account.currency].label}</span>
+        </button>
+      `
+    )
+    .join("");
+}
+
+function renderAccounts() {
+  return `
+    <header class="topbar">
+      <div class="brand">
+        <h1>계좌</h1>
+        <p>계좌를 열고 입금, 송금, 지출을 기록합니다</p>
+      </div>
+    </header>
     ${
       state.accounts.length
-        ? `<div class="stack">${cards}</div>`
-        : `<div class="empty">아직 계좌가 없습니다.<br />먼저 원화 또는 캐나다 달러 계좌를 만들어 주세요.</div>`
+        ? `<div class="stack">${renderAccountCards()}</div>`
+        : `<div class="empty">아직 계좌가 없습니다.<br />설정에서 계좌를 추가해 주세요.</div>`
     }
+  `;
+}
+
+function renderSettings() {
+  return `
+    <header class="topbar">
+      <div class="brand">
+        <h1>설정</h1>
+        <p>계좌와 사유, 지출계획을 관리합니다</p>
+      </div>
+    </header>
+    <div class="stack">
+      <button class="menu-card" data-action="new-account">
+        <div>
+          <h2>계좌 추가</h2>
+          <p>원화 또는 캐나다 달러 계좌를 만듭니다</p>
+        </div>
+      </button>
+      <button class="menu-card" data-action="open-reasons">
+        <div>
+          <h2>사유</h2>
+          <p>입금, 송금, 지출, 지출계획 사유를 관리합니다</p>
+        </div>
+      </button>
+      <button class="menu-card" data-action="open-plans">
+        <div>
+          <h2>계획 설정</h2>
+          <p>지출계획별 출금 계좌와 금액을 지정합니다</p>
+        </div>
+      </button>
+    </div>
   `;
 }
 
@@ -347,7 +406,7 @@ function renderPlanDashboard() {
     .filter((plan) => plan && plan.accountId && plan.amount > 0);
 
   if (!items.length) {
-    return `<div class="empty">아직 지출계획이 없습니다.<br />사유를 만든 뒤 출금 계좌와 금액을 지정해 주세요.</div>`;
+    return `<div class="empty">아직 지출계획이 없습니다.<br />설정에서 사유와 출금 계좌, 금액을 지정해 주세요.</div>`;
   }
 
   const cards = items
@@ -382,7 +441,7 @@ function renderPlans() {
   if (!state.accounts.length) {
     return `
       <header class="topbar">
-        <button class="back" data-action="go-home">← 대시보드</button>
+        <button class="back" data-action="go-settings">← 설정</button>
       </header>
       <div class="empty">계좌를 먼저 만든 뒤 지출계획을 설정할 수 있습니다.</div>
     `;
@@ -392,7 +451,7 @@ function renderPlans() {
   if (!reasons.length) {
     return `
       <header class="topbar">
-        <button class="back" data-action="go-home">← 대시보드</button>
+        <button class="back" data-action="go-settings">← 설정</button>
         <button class="btn" data-action="open-reasons">사유 관리</button>
       </header>
       <div class="empty">지출계획 사유가 없습니다.<br />사유 관리에서 먼저 추가해 주세요.</div>
@@ -429,7 +488,7 @@ function renderPlans() {
 
   return `
     <header class="topbar">
-      <button class="back" data-action="go-home">← 대시보드</button>
+      <button class="back" data-action="go-settings">← 설정</button>
       <button class="btn" data-action="open-reasons">사유 관리</button>
     </header>
     <div class="brand page-intro">
@@ -478,7 +537,7 @@ function renderReasons() {
 
   return `
     <header class="topbar">
-      <button class="back" data-action="go-home">← 대시보드</button>
+      <button class="back" data-action="go-settings">← 설정</button>
     </header>
     <div class="brand page-intro">
       <h1>사유 관리</h1>
@@ -499,7 +558,7 @@ function renderDetail(account) {
 
   return `
     <header class="topbar">
-      <button class="back" data-action="go-home">← 대시보드</button>
+      <button class="back" data-action="go-accounts">← 계좌</button>
       <div class="actions">
         <button class="icon-btn" data-action="edit-account">편집</button>
         <button class="icon-btn" data-action="delete-account">삭제</button>
@@ -754,6 +813,7 @@ function createAccount() {
   if (!name) return showError("계좌 이름을 입력해 주세요.");
   if (currency !== "KRW" && currency !== "CAD") return showError("통화를 선택해 주세요.");
   state.accounts.push({ id: uid(), name, currency, balance: 0 });
+  view.page = "accounts";
   saveState();
   closeModal();
   render();
@@ -778,7 +838,7 @@ function deleteAccount() {
   state.plans = state.plans.map((plan) =>
     plan.accountId === account.id ? { ...plan, accountId: "" } : plan
   );
-  view.page = "home";
+  view.page = "accounts";
   view.accountId = null;
   saveState();
   closeModal();
@@ -965,8 +1025,20 @@ app.addEventListener("click", (event) => {
     render();
     return;
   }
-  if (action === "go-home") {
-    view.page = "home";
+  if (action === "tab-dashboard" || action === "go-home") {
+    view.page = "dashboard";
+    view.accountId = null;
+    render();
+    return;
+  }
+  if (action === "tab-accounts" || action === "go-accounts") {
+    view.page = "accounts";
+    view.accountId = null;
+    render();
+    return;
+  }
+  if (action === "tab-settings" || action === "go-settings") {
+    view.page = "settings";
     view.accountId = null;
     render();
     return;
