@@ -24,6 +24,7 @@ const modalRoot = document.getElementById("modal-root");
 
 const state = loadState();
 const view = { page: "dashboard", accountId: null };
+let pendingImport = null;
 
 function loadState() {
   try {
@@ -42,6 +43,7 @@ function emptyState() {
     reasons: cloneReasons(DEFAULT_REASONS),
     plans: [],
     statsRate: 1000,
+    editMode: false,
   };
 }
 
@@ -81,7 +83,7 @@ function migrateState(data) {
       accountId: plan.accountId || "",
       amount: Number(plan.amount) || 0,
     }));
-  return { accounts, transactions, reasons, plans, statsRate };
+  return { accounts, transactions, reasons, plans, statsRate, editMode: Boolean(data.editMode) };
 }
 
 function saveState() {
@@ -259,6 +261,8 @@ function render() {
     inner = renderReasons();
   } else if (view.page === "plans") {
     inner = renderPlans();
+  } else if (view.page === "edit-deposits") {
+    inner = renderEditDeposits();
   } else {
     inner = renderDashboard();
   }
@@ -387,6 +391,36 @@ function renderSettings() {
           <p>지출계획별 출금 계좌와 금액을 지정합니다</p>
         </div>
       </button>
+      <button class="menu-card" data-action="toggle-edit-mode" aria-pressed="${state.editMode}">
+        <div>
+          <h2>수정 모드</h2>
+          <p>${state.editMode ? "켜짐 · 각 계좌의 입금 금액을 고칠 수 있습니다" : "꺼짐 · 켜면 입금 금액을 수정할 수 있습니다"}</p>
+        </div>
+        <span class="toggle ${state.editMode ? "is-on" : ""}" aria-hidden="true"></span>
+      </button>
+      ${
+        state.editMode
+          ? `<button class="menu-card" data-action="open-edit-deposits">
+              <div>
+                <h2>입금 금액 수정</h2>
+                <p>계좌별 입금 내역 금액을 고칩니다</p>
+              </div>
+            </button>`
+          : ""
+      }
+      <button class="menu-card" data-action="export-data">
+        <div>
+          <h2>데이터 내보내기</h2>
+          <p>저장된 모든 내용을 JSON 파일로 받습니다</p>
+        </div>
+      </button>
+      <button class="menu-card" data-action="import-data">
+        <div>
+          <h2>데이터 복원</h2>
+          <p>JSON 파일을 불러와 현재 데이터를 바꿉니다</p>
+        </div>
+      </button>
+      <input id="restore-file" type="file" accept="application/json,.json" hidden />
     </div>
   `;
 }
@@ -576,8 +610,46 @@ function renderDetail(account) {
       <button class="btn" data-action="transfer">송금</button>
       <button class="btn" data-action="expense">지출</button>
     </div>
-    <h2 class="section-title">거래 내역</h2>
+    <h2 class="section-title">거래 내역${state.editMode ? " · 수정 모드" : ""}</h2>
     <div class="card tx-card">${list}</div>
+  `;
+}
+
+function renderEditDeposits() {
+  const blocks = state.accounts
+    .map((account) => {
+      const deposits = state.transactions
+        .filter((tx) => tx.accountId === account.id && tx.type === "deposit")
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      const rows = deposits.length
+        ? deposits.map(renderTransaction).join("")
+        : `<p class="hint">입금 내역이 없습니다.</p>`;
+      return `
+        <section class="card">
+          <div class="plan-top">
+            <h3>${escapeHtml(account.name)}</h3>
+            <span class="badge badge-${account.currency.toLowerCase()}">${CURRENCY[account.currency].label}</span>
+          </div>
+          <p class="plan-meta">잔액 ${formatMoney(account.balance, account.currency)}</p>
+          <div class="tx-card">${rows}</div>
+        </section>
+      `;
+    })
+    .join("");
+
+  return `
+    <header class="topbar">
+      <button class="back" data-action="go-settings">← 설정</button>
+    </header>
+    <div class="brand page-intro">
+      <h1>입금 금액 수정</h1>
+      <p>입금 금액을 바꾸면 해당 계좌 잔액도 함께 맞춰집니다.</p>
+    </div>
+    ${
+      state.accounts.length
+        ? `<div class="stack">${blocks}</div>`
+        : `<div class="empty">수정할 계좌가 없습니다.</div>`
+    }
   `;
 }
 
@@ -604,6 +676,7 @@ function renderTransaction(tx) {
     detail = detail ? `${detail} · ${rateText}` : rateText;
   }
 
+  const canEdit = state.editMode && tx.type === "deposit";
   return `
     <div class="tx">
       <div>
@@ -611,8 +684,15 @@ function renderTransaction(tx) {
         ${detail ? `<p>${detail}</p>` : ""}
         <p>${formatDate(tx.createdAt)}</p>
       </div>
-      <div class="amt ${plus ? "plus" : "minus"}">
-        ${plus ? "+" : "-"}${formatMoney(tx.amount, tx.currency)}
+      <div class="tx-side">
+        <div class="amt ${plus ? "plus" : "minus"}">
+          ${plus ? "+" : "-"}${formatMoney(tx.amount, tx.currency)}
+        </div>
+        ${
+          canEdit
+            ? `<button class="btn btn-ghost btn-tiny" data-action="edit-deposit" data-id="${tx.id}">수정</button>`
+            : ""
+        }
       </div>
     </div>
   `;
@@ -1013,6 +1093,158 @@ function saveStatsRate() {
   render();
 }
 
+function toggleEditMode() {
+  state.editMode = !state.editMode;
+  saveState();
+  render();
+}
+
+function openEditDeposit(txId) {
+  const tx = state.transactions.find((item) => item.id === txId);
+  const account = tx ? findAccount(tx.accountId) : null;
+  if (!tx || tx.type !== "deposit" || !account) return;
+  openSheet(
+    "입금 금액 수정",
+    `
+      <div class="field"><span>계좌</span><div class="readonly">${escapeHtml(account.name)}</div></div>
+      <div class="field"><span>사유</span><div class="readonly">${escapeHtml(tx.reason || "")}</div></div>
+      ${field("입금 금액", `<input id="f-amount" inputmode="decimal" value="${escapeHtml(String(tx.amount))}" />`)}
+      <p class="error" id="form-error" hidden></p>
+    `,
+    `
+      <button class="btn btn-ghost" data-action="close-modal">취소</button>
+      <button class="btn btn-primary" data-action="save-edit-deposit" data-id="${tx.id}">저장</button>
+    `
+  );
+  document.getElementById("f-amount").focus();
+}
+
+function saveEditDeposit(txId) {
+  const tx = state.transactions.find((item) => item.id === txId);
+  const account = tx ? findAccount(tx.accountId) : null;
+  if (!tx || !account) return closeModal();
+  let amount = parseAmount(document.getElementById("f-amount").value);
+  if (!(amount > 0)) return showError("입금 금액을 올바르게 입력해 주세요.");
+  amount = normalizeAmount(amount, account.currency);
+  const nextBalance = account.balance - tx.amount + amount;
+  if (nextBalance < 0) return showError("이 금액으로 바꾸면 잔액이 부족해집니다.");
+  account.balance = nextBalance;
+  tx.amount = amount;
+  saveState();
+  closeModal();
+  render();
+}
+
+function snapshotData() {
+  return {
+    app: "moneyflow2",
+    exportedAt: new Date().toISOString(),
+    data: {
+      accounts: state.accounts,
+      transactions: state.transactions,
+      reasons: state.reasons,
+      plans: state.plans,
+      statsRate: state.statsRate,
+      editMode: state.editMode,
+    },
+  };
+}
+
+function applyImportedData(raw) {
+  const parsed = JSON.parse(raw);
+  const source = parsed && parsed.data && typeof parsed.data === "object" ? parsed.data : parsed;
+  if (!source || !Array.isArray(source.accounts) || !Array.isArray(source.transactions)) {
+    throw new Error("invalid");
+  }
+  const next = migrateState(source);
+  state.accounts = next.accounts;
+  state.transactions = next.transactions;
+  state.reasons = next.reasons;
+  state.plans = next.plans;
+  state.statsRate = next.statsRate;
+  state.editMode = next.editMode;
+  view.page = "settings";
+  view.accountId = null;
+  saveState();
+}
+
+async function exportData() {
+  const text = JSON.stringify(snapshotData(), null, 2);
+  const name = `moneyflow2-${new Date().toISOString().slice(0, 10)}.json`;
+  const file = new File([text], name, { type: "application/json" });
+  if (navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: "머니플로우 백업" });
+      return;
+    } catch (error) {
+      if (error.name === "AbortError") return;
+    }
+  }
+  const url = URL.createObjectURL(file);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function importData() {
+  const input = document.getElementById("restore-file");
+  if (!input) return;
+  input.value = "";
+  input.click();
+}
+
+function restoreFromFile(input) {
+  const file = input.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const raw = String(reader.result || "");
+    try {
+      const parsed = JSON.parse(raw);
+      const source = parsed && parsed.data && typeof parsed.data === "object" ? parsed.data : parsed;
+      if (!source || !Array.isArray(source.accounts) || !Array.isArray(source.transactions)) {
+        throw new Error("invalid");
+      }
+      pendingImport = raw;
+      openSheet(
+        "데이터 복원",
+        `<p>선택한 파일로 현재 저장된 계좌, 거래, 사유, 지출계획을 모두 바꿉니다. 복원할까요?</p>`,
+        `
+          <button class="btn btn-ghost" data-action="close-modal">취소</button>
+          <button class="btn btn-danger" data-action="confirm-import">복원</button>
+        `
+      );
+    } catch {
+      pendingImport = null;
+      openSheet(
+        "복원 실패",
+        `<p class="error">머니플로우 JSON 파일이 아닙니다. 내보내기한 파일을 선택해 주세요.</p>`,
+        `<button class="btn btn-primary" data-action="close-modal">확인</button>`
+      );
+    }
+  };
+  reader.readAsText(file);
+}
+
+function confirmImport() {
+  if (!pendingImport) return closeModal();
+  try {
+    applyImportedData(pendingImport);
+    pendingImport = null;
+    closeModal();
+    render();
+  } catch {
+    pendingImport = null;
+    openSheet(
+      "복원 실패",
+      `<p class="error">파일을 적용하지 못했습니다.</p>`,
+      `<button class="btn btn-primary" data-action="close-modal">확인</button>`
+    );
+  }
+}
+
 app.addEventListener("click", (event) => {
   const btn = event.target.closest("[data-action]");
   if (!btn) return;
@@ -1053,6 +1285,15 @@ app.addEventListener("click", (event) => {
     render();
     return;
   }
+  if (action === "toggle-edit-mode") return toggleEditMode();
+  if (action === "open-edit-deposits") {
+    view.page = "edit-deposits";
+    render();
+    return;
+  }
+  if (action === "edit-deposit") return openEditDeposit(btn.dataset.id);
+  if (action === "export-data") return exportData();
+  if (action === "import-data") return importData();
   if (action === "add-reason") return addReason(btn.dataset.kind);
   if (action === "delete-reason") return deleteReason(btn.dataset.kind, btn.dataset.reason);
   if (action === "save-plan") return savePlan(btn);
@@ -1077,6 +1318,7 @@ app.addEventListener("click", (event) => {
 
 app.addEventListener("change", (event) => {
   if (event.target.id === "stats-rate") saveStatsRate();
+  if (event.target.id === "restore-file") restoreFromFile(event.target);
 });
 
 modalRoot.addEventListener("click", (event) => {
@@ -1094,6 +1336,8 @@ modalRoot.addEventListener("click", (event) => {
   if (action === "save-deposit") return saveDeposit();
   if (action === "save-expense") return saveExpense();
   if (action === "save-transfer") return saveTransfer();
+  if (action === "save-edit-deposit") return saveEditDeposit(btn.dataset.id);
+  if (action === "confirm-import") return confirmImport();
 });
 
 modalRoot.addEventListener("change", (event) => {
