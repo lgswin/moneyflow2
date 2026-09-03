@@ -1,0 +1,25 @@
+# macOS / external volume metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Env and logs
+.env
+.env.*
+*.log
+
+# Dependencies (if added later)
+node_modules/

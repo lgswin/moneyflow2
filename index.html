@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#ebe6dc" />
+    <title>머니플로우</title>
+    <script>
+      if (!location.pathname.endsWith("/") && !location.pathname.endsWith(".html")) {
+        location.replace(location.pathname + "/" + location.search + location.hash);
+      }
+    </script>
+    <meta name="description" content="원화·달러 계좌의 입금, 송금, 지출을 기록하는 간단한 돈 관리 앱" />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css"
+    />
+    <link rel="stylesheet" href="./css/style.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="modal-root"></div>
+    <script src="./js/app.js" defer></script>
+  </body>
+</html>
