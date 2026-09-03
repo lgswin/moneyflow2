@@ -245,7 +245,7 @@ select {
   bottom: 0;
   z-index: 5;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 4px;
   width: min(100%, var(--max));
   transform: translateX(-50%);
@@ -263,6 +263,8 @@ select {
   color: var(--muted);
   box-shadow: none;
   font-weight: 700;
+  font-size: 0.86rem;
+  padding: 8px 4px;
 }
 
 .tab.is-active {

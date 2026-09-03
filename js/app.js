@@ -82,6 +82,7 @@ function migrateState(data) {
       reason: String(plan.reason),
       accountId: plan.accountId || "",
       amount: Number(plan.amount) || 0,
+      dueDate: /^\d{4}-\d{2}-\d{2}$/.test(plan.dueDate) ? plan.dueDate : "",
     }));
   return { accounts, transactions, reasons, plans, statsRate, editMode: Boolean(data.editMode) };
 }
@@ -196,6 +197,31 @@ function groupByReason(items) {
   return [...map.entries()];
 }
 
+function parseISODate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value || "")) return null;
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function formatPlanDate(value) {
+  const date = parseISODate(value);
+  if (!date) return "";
+  return new Intl.DateTimeFormat("ko-KR", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    weekday: "short",
+  }).format(date);
+}
+
+function isPlanOverdue(plan, status) {
+  const due = parseISODate(plan.dueDate);
+  if (!due || status === "done" || status === "over") return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return due < today;
+}
+
 function findPlan(reason) {
   return state.plans.find((plan) => plan.reason === reason);
 }
@@ -225,6 +251,7 @@ function planProgress(plan) {
 function activeTab() {
   if (view.page === "dashboard") return "dashboard";
   if (view.page === "accounts" || view.page === "detail") return "accounts";
+  if (view.page === "plan-status") return "plans";
   return "settings";
 }
 
@@ -233,6 +260,7 @@ function renderTabbar() {
   const tabs = [
     ["dashboard", "대시보드"],
     ["accounts", "계좌"],
+    ["plans", "지출계획"],
     ["settings", "설정"],
   ];
   return `
@@ -259,6 +287,8 @@ function render() {
     inner = renderSettings();
   } else if (view.page === "reasons") {
     inner = renderReasons();
+  } else if (view.page === "plan-status") {
+    inner = renderPlanTab();
   } else if (view.page === "plans") {
     inner = renderPlans();
   } else if (view.page === "edit-deposits") {
@@ -294,7 +324,7 @@ function renderDashboard() {
     <header class="topbar">
       <div class="brand">
         <h1>대시보드</h1>
-        <p>잔액과 지출계획, 입출 통계를 봅니다</p>
+        <p>잔액과 입출 통계를 봅니다</p>
       </div>
     </header>
 
@@ -319,9 +349,6 @@ function renderDashboard() {
         <p class="amt">${formatMoney(stats.balances.CAD, "CAD")}</p>
       </article>
     </section>
-
-    <h2 class="section-title block-title">지출계획</h2>
-    ${renderPlanDashboard()}
 
     <h2 class="section-title block-title">입출 통계</h2>
     <section class="flow-grid">
@@ -388,7 +415,7 @@ function renderSettings() {
       <button class="menu-card" data-action="open-plans">
         <div>
           <h2>계획 설정</h2>
-          <p>지출계획별 출금 계좌와 금액을 지정합니다</p>
+          <p>지출계획별 출금 계좌, 금액, 예정 날짜를 지정합니다</p>
         </div>
       </button>
       <button class="menu-card" data-action="toggle-edit-mode" aria-pressed="${state.editMode}">
@@ -434,13 +461,30 @@ function planStatusLabel(status) {
   }[status];
 }
 
+function renderPlanTab() {
+  return `
+    <header class="topbar">
+      <div class="brand">
+        <h1>지출계획</h1>
+        <p>사유별 계획 금액이 지출 또는 송금으로 확인됐는지 봅니다</p>
+      </div>
+    </header>
+    ${renderPlanDashboard()}
+  `;
+}
+
 function renderPlanDashboard() {
   const items = (state.reasons.plan || [])
     .map((reason) => findPlan(reason))
-    .filter((plan) => plan && plan.accountId && plan.amount > 0);
+    .filter((plan) => plan && plan.accountId && plan.amount > 0)
+    .sort((a, b) => {
+      const aTime = parseISODate(a.dueDate)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+      const bTime = parseISODate(b.dueDate)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+      return aTime - bTime;
+    });
 
   if (!items.length) {
-    return `<div class="empty">아직 지출계획이 없습니다.<br />설정에서 사유와 출금 계좌, 금액을 지정해 주세요.</div>`;
+    return `<div class="empty">아직 지출계획이 없습니다.<br />설정에서 사유와 출금 계좌, 금액, 예정 날짜를 지정해 주세요.</div>`;
   }
 
   const cards = items
@@ -449,13 +493,16 @@ function renderPlanDashboard() {
       const currency = progress.account?.currency || "KRW";
       const accountName = progress.account?.name || "삭제된 계좌";
       const remain = Math.max(progress.planned - progress.spent, 0);
+      const overdue = isPlanOverdue(plan, progress.status);
+      const dueLabel = formatPlanDate(plan.dueDate);
       return `
         <article class="card plan-card">
           <div class="plan-top">
             <h3>${escapeHtml(plan.reason)}</h3>
-            <span class="badge badge-${progress.status}">${planStatusLabel(progress.status)}</span>
+            <span class="badge badge-${overdue ? "over" : progress.status}">${overdue ? "예정일 지남" : planStatusLabel(progress.status)}</span>
           </div>
-          <p class="plan-meta">${escapeHtml(accountName)} · 계획 ${formatMoney(progress.planned, currency)}</p>
+          <p class="plan-meta">${dueLabel ? `예정 ${dueLabel}` : "예정 날짜 없음"} · ${escapeHtml(accountName)}</p>
+          <p class="plan-meta">계획 ${formatMoney(progress.planned, currency)}</p>
           <div class="progress is-${progress.status}"><span style="width:${Math.round(progress.ratio * 100)}%"></span></div>
           <p class="plan-meta">
             확인 ${formatMoney(progress.spent, currency)}
@@ -509,6 +556,7 @@ function renderPlans() {
           <h2>${escapeHtml(reason)}</h2>
           ${field("출금 예정 계좌", `<select class="plan-account"><option value="">계좌 선택</option>${accountOptions(plan?.accountId)}</select>`)}
           ${field("계획 금액", `<input class="plan-amount" inputmode="decimal" value="${plan?.amount ? escapeHtml(String(plan.amount)) : ""}" placeholder="${currency === "CAD" ? "100.00" : "100000"}" />`)}
+          ${field("지출 예정 날짜", `<input class="plan-due" type="date" value="${escapeHtml(plan?.dueDate || "")}" />`)}
           <p class="hint">이 사유로 해당 계좌에서 지출하거나 송금하면 계획이 확인됩니다.</p>
           <p class="error" hidden></p>
           <div class="sheet-actions">
@@ -527,7 +575,7 @@ function renderPlans() {
     </header>
     <div class="brand page-intro">
       <h1>지출계획 설정</h1>
-      <p>사유별로 출금 계좌와 금액을 정하면 대시보드에서 확인 여부를 보여 줍니다.</p>
+      <p>사유별로 출금 계좌, 금액, 지출 예정 날짜를 정합니다.</p>
     </div>
     <div class="stack">${cards}</div>
   `;
@@ -1058,6 +1106,7 @@ function savePlan(btn) {
   const error = card.querySelector(".error");
   const accountId = card.querySelector(".plan-account")?.value || "";
   const amount = parseAmount(card.querySelector(".plan-amount")?.value);
+  const dueDate = card.querySelector(".plan-due")?.value || "";
   const show = (message) => {
     if (!error) return;
     error.hidden = !message;
@@ -1065,6 +1114,7 @@ function savePlan(btn) {
   };
   if (!accountId) return show("출금 예정 계좌를 선택해 주세요.");
   if (!(amount > 0)) return show("계획 금액을 입력해 주세요.");
+  if (!parseISODate(dueDate)) return show("지출 예정 날짜를 선택해 주세요.");
   const account = findAccount(accountId);
   if (!account) return show("계좌를 다시 선택해 주세요.");
   const existing = findPlan(reason);
@@ -1072,8 +1122,9 @@ function savePlan(btn) {
   if (existing) {
     existing.accountId = accountId;
     existing.amount = normalized;
+    existing.dueDate = dueDate;
   } else {
-    state.plans.push({ id: uid(), reason, accountId, amount: normalized });
+    state.plans.push({ id: uid(), reason, accountId, amount: normalized, dueDate });
   }
   saveState();
   render();
@@ -1265,6 +1316,12 @@ app.addEventListener("click", (event) => {
   }
   if (action === "tab-accounts" || action === "go-accounts") {
     view.page = "accounts";
+    view.accountId = null;
+    render();
+    return;
+  }
+  if (action === "tab-plans") {
+    view.page = "plan-status";
     view.accountId = null;
     render();
     return;
