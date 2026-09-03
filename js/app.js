@@ -1,4 +1,4 @@
-const APP_VERSION = "1.6.0";
+const APP_VERSION = "1.6.1";
 const STORAGE_KEY = "moneyflow2";
 
 const CURRENCY = {
@@ -338,17 +338,6 @@ function renderDashboard() {
         <input id="stats-rate" inputmode="decimal" value="${escapeHtml(String(stats.rate))}" />
         <span>KRW</span>
       </label>
-    </section>
-
-    <section class="dash-grid">
-      <article class="card stat-card">
-        <p class="section-title">원화</p>
-        <p class="amt">${formatMoney(stats.balances.KRW, "KRW")}</p>
-      </article>
-      <article class="card stat-card">
-        <p class="section-title">캐나다 달러</p>
-        <p class="amt">${formatMoney(stats.balances.CAD, "CAD")}</p>
-      </article>
     </section>
 
     <h2 class="section-title block-title">입출 통계</h2>
